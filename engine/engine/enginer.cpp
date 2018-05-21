@@ -306,23 +306,50 @@ Rcpp::DataFrame EngineR::readDataset(const string &datasetId, Rcpp::List columns
             for (int j = 0; j < rowCount; j++)
             {
                 if ( ! dataset.isRowFiltered(j))
-                    v[rowNo++] = column.value<double>(j);
+                    v[rowNo++] = column.dvalue(j);
             }
 
             columns[colNo] = v;
         }
-        else if (column.measureType() == MeasureType::CONTINUOUS)
+        else if (column.measureType() == MeasureType::CONTINUOUS ||
+                 column.measureType() == MeasureType::ID)
         {
-            Rcpp::IntegerVector v(rowCountExFiltered, Rcpp::IntegerVector::get_na());
-            rowNo = 0;
-
-            for (int j = 0; j < rowCount; j++)
+            if (column.dataType() == DataType::INTEGER)
             {
-                if ( ! dataset.isRowFiltered(j))
-                    v[rowNo++] = column.value<int>(j);
-            }
+                Rcpp::IntegerVector v(rowCountExFiltered, Rcpp::IntegerVector::get_na());
+                rowNo = 0;
 
-            columns[colNo] = v;
+                for (int j = 0; j < rowCount; j++)
+                {
+                    if ( ! dataset.isRowFiltered(j))
+                        v[rowNo++] = column.ivalue(j);
+                }
+
+                if (column.measureType() == MeasureType::ID)
+                    v.attr("jmv-id") = true;
+
+                columns[colNo] = v;
+            }
+            else // if (column.dataType() == DataType::TEXT)
+            {
+                Rcpp::CharacterVector v(rowCountExFiltered, Rcpp::CharacterVector::get_na());
+                rowNo = 0;
+
+                for (int j = 0; j < rowCount; j++)
+                {
+                    if ( ! dataset.isRowFiltered(j))
+                    {
+                        const char *value = column.svalue(j);
+                        if (value != NULL)
+                            v[rowNo++] = value;
+                    }
+                }
+
+                if (column.measureType() == MeasureType::ID)
+                    v.attr("jmv-id") = true;
+
+                columns[colNo] = v;
+            }
         }
         else
         {
@@ -359,7 +386,7 @@ Rcpp::DataFrame EngineR::readDataset(const string &datasetId, Rcpp::List columns
             {
                 if ( ! dataset.isRowFiltered(j))
                 {
-                    int value = column.value<int>(j);
+                    int value = column.ivalue(j);
                     if (value != MISSING)
                         v[rowNo] = indexes[value];
                     rowNo++;

@@ -86,6 +86,25 @@ const char *Column::formulaMessage() const
     return _mm->resolve(struc()->formulaMessage);
 }
 
+int Column::ivalue(int rowIndex)
+{
+    return cellAt<int>(rowIndex);
+}
+
+double Column::dvalue(int rowIndex)
+{
+    return cellAt<double>(rowIndex);
+}
+
+const char *Column::svalue(int rowIndex)
+{
+    char *chars = cellAt<char*>(rowIndex);
+    if (chars != NULL)
+        return _mm->resolve(chars);
+    else
+        return "";
+}
+
 ColumnStruct *Column::struc() const
 {
     return _mm->resolve(_rel);

@@ -28,6 +28,9 @@ public:
     void setColumnType(ColumnType::Type columnType);
     void setDataType(DataType::Type dataType);
     void setMeasureType(MeasureType::Type measureType);
+    void setSValue(int rowIndex, char *value, bool initing = false);
+    void setDValue(int rowIndex, double value, bool initing = false);
+    void setIValue(int rowIndex, int value, bool initing = false);
     void setAutoMeasure(bool yes);
     void appendLevel(int value, const char *label, const char *importValue = 0);
     void insertLevel(int value, const char *label, const char *importValue = 0);
@@ -42,58 +45,6 @@ public:
     void setTrimLevels(bool trim);
 
     int changes() const;
-
-    template<typename T> void setValue(int rowIndex, T value, bool initing = false)
-    {
-        if (dataType() == DataType::DECIMAL)
-            assert(sizeof(T) == 8);
-        else
-            assert(sizeof(T) == 4);
-
-        if (measureType() != MeasureType::CONTINUOUS)
-        {
-            int newValue = (int)value;
-
-            if (initing == false)
-            {
-                int oldValue = this->value<int>(rowIndex);
-                if (oldValue == newValue)
-                    return;
-
-                if (oldValue != INT_MIN)
-                {
-                    Level *level = rawLevel(oldValue);
-                    assert(level != NULL);
-                    level->count--;
-
-                    if (level->count == 0 && trimLevels())
-                        removeLevel(oldValue);
-                    else if ( ! this->_parent->isRowFiltered(rowIndex))
-                        level->countExFiltered--;
-                }
-            }
-
-            if (newValue != INT_MIN)
-            {
-                Level *level = rawLevel(newValue);
-                if (level == NULL)
-                {
-                    std::ostringstream ss;
-                    ss << newValue;
-                    std::string str = ss.str();
-                    const char *c_str = str.c_str();
-                    insertLevel(newValue, c_str, c_str);
-                    level = rawLevel(newValue);
-                }
-                assert(level != NULL);
-                level->count++;
-                if ( ! this->_parent->isRowFiltered(rowIndex))
-                    level->countExFiltered++;
-            }
-        }
-
-        cellAt<T>(rowIndex) = value;
-    }
 
     template<typename T> void setRowCount(size_t count)
     {
@@ -112,10 +63,19 @@ public:
         int oldCount = cs->rowCount;
         cs->rowCount = count;
 
-        for (size_t i = oldCount; i < count; i++) {
-            if (sizeof(T) == 8)
+        if (measureType() == MeasureType::ID)
+        {
+            for (size_t i = oldCount; i < count; i++)
+                cellAt<char*>(i) = NULL;
+        }
+        else if (dataType() == DataType::DECIMAL)
+        {
+            for (size_t i = oldCount; i < count; i++)
                 cellAt<double>(i) = NAN;
-            else
+        }
+        else
+        {
+            for (size_t i = oldCount; i < count; i++)
                 cellAt<int>(i) = INT_MIN;
         }
     }

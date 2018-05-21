@@ -1182,33 +1182,43 @@ class Instance:
                         raise TypeError("Cannot assign non-numeric value to column '{}'", column.name)
 
             elif column.data_type == DataType.TEXT:
-                for j in range(row_count):
-                    value = values[j]
 
-                    if value is None or value == '':
-                        column[row_start + j] = -2147483648
-                    else:
+                if column.measure_type == MeasureType.ID:
+                    for j in range(row_count):
+                        value = values[j]
+
                         if isinstance(value, str):
-                            if value == '':
-                                value = -2147483648
-                        elif isinstance(value, float):
-                            if math.isnan(value):
-                                value = -2147483648
+                            column.set_value(row_start + j, value)
+                        else:
+                            column.clear_at(row_start + j)
+                else:
+                    for j in range(row_count):
+                        value = values[j]
+
+                        if value is None or value == '':
+                            column.clear_at(row_start + j)
+                        else:
+                            if isinstance(value, str):
+                                if value == '':
+                                    value = -2147483648
+                            elif isinstance(value, float):
+                                if math.isnan(value):
+                                    value = -2147483648
+                                else:
+                                    value = str(value)
                             else:
                                 value = str(value)
-                        else:
-                            value = str(value)
 
-                        column.clear_at(row_start + j)  # necessary to clear first with TEXT
+                            column.clear_at(row_start + j)  # necessary to clear first with TEXT
 
-                        if value == -2147483648:
-                            index = -2147483648
-                        elif not column.has_level(value):
-                            index = column.level_count
-                            column.insert_level(index, value)
-                        else:
-                            index = column.get_value_for_label(value)
-                        column[row_start + j] = index
+                            if value == -2147483648:
+                                index = -2147483648
+                            elif not column.has_level(value):
+                                index = column.level_count
+                                column.insert_level(index, value)
+                            else:
+                                index = column.get_value_for_label(value)
+                            column.set_value(row_start + j, index)
             else:
                 for j in range(row_count):
                     value = values[j]

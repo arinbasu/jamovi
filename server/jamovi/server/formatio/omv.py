@@ -289,12 +289,12 @@ def read(data, path, prog_cb):
                             v = values[0]
                             if v != -2147483648:  # missing value
                                 column.append_level(v, str(v))
-                            column[row_offset + i] = v
+                            column.set_value(row_offset + i, v)
                             i += 1
                     else:
                         i = 0
                         for values in struct.iter_unpack(elem_fmt, buff_view):
-                            column[row_offset + i] = values[0]
+                            column.set_value(row_offset + i, values[0])
                             i += 1
 
                 prog_cb(0.3 + 0.65 * (col_no + 1) / ncols)

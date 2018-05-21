@@ -103,12 +103,17 @@ cdef class DataSet:
 
     def append_column(self, name, import_name=''):
         c = Column()
-        c._this = self._this.appendColumn(name.encode('utf-8'), import_name.encode('utf-8'))
+        c._this = self._this.appendColumn(
+            name.encode('utf-8'),
+            import_name.encode('utf-8'))
         return c
 
     def insert_column(self, index, name, import_name=''):
         c = Column()
-        c._this = self._this.insertColumn(index, name.encode('utf-8'), import_name.encode('utf-8'))
+        c._this = self._this.insertColumn(
+            index,
+            name.encode('utf-8'),
+            import_name.encode('utf-8'))
         return c
 
     def set_row_count(self, count):
@@ -170,8 +175,12 @@ cdef extern from "columnw.h":
         void setAutoMeasure(bool auto)
         bool autoMeasure() const
         void append[T](const T &value)
-        void setValue[T](int index, T value, bool init)
-        T value[T](int index)
+        void setDValue(int index, double value, bool init)
+        void setIValue(int index, int value, bool init)
+        void setSValue(int index, char *value, bool init)
+        int ivalue(int index)
+        double dvalue(int index)
+        const char *svalue(int index)
         const char *getLabel(int value) const
         const char *getImportValue(int value) const
         int valueForLabel(const char *label) const
@@ -371,7 +380,7 @@ cdef class Column:
 
     @property
     def has_levels(self):
-        return self.measure_type != MeasureType.CONTINUOUS
+        return self.measure_type != MeasureType.CONTINUOUS and self.measure_type != MeasureType.ID
 
     @property
     def level_count(self):
@@ -409,38 +418,33 @@ cdef class Column:
 
     def clear_at(self, index):
         if self.data_type is DataType.DECIMAL:
-            self._this.setValue[double](index, float('nan'))
+            self._this.setDValue(index, float('nan'), False)
+        elif self.data_type is DataType.TEXT and self.measure_type is MeasureType.ID:
+            self._this.setSValue(index, bytes(), False)
         else:
-            self._this.setValue[int](index, -2147483648)
-
-    def __setitem__(self, index, value):
-
-        if index >= self.row_count:
-            raise IndexError()
-
-        if self.data_type is DataType.DECIMAL:
-            self._this.setValue[double](index, value)
-        else:
-            self._this.setValue[int](index, value)
+            self._this.setIValue(index, -2147483648, False)
 
     def set_value(self, index, value, initing=False):
         if index >= self.row_count:
             raise IndexError()
 
         if self.data_type is DataType.DECIMAL:
-            self._this.setValue[double](index, value)
+            self._this.setDValue(index, value, False)
         elif self.data_type is DataType.TEXT and isinstance(value, str):
-            if value == '':
-                level_i = -2147483648
-            elif self.has_level(value):
-                level_i = self.get_value_for_label(value)
+            if self.measure_type is MeasureType.ID:
+                self._this.setSValue(index, value.encode('utf-8'), initing)
             else:
-                level_i = self.level_count
-                level_v = value.encode('utf-8')
-                self._this.appendLevel(level_i, level_v, ''.encode('utf-8'))
-            self._this.setValue[int](index, level_i, initing)
+                if value == '':
+                    level_i = -2147483648
+                elif self.has_level(value):
+                    level_i = self.get_value_for_label(value)
+                else:
+                    level_i = self.level_count
+                    level_v = value.encode('utf-8')
+                    self._this.appendLevel(level_i, level_v, ''.encode('utf-8'))
+                self._this.setIValue(index, level_i, initing)
         else:
-            self._this.setValue[int](index, value, initing)
+            self._this.setIValue(index, value, initing)
 
     def __getitem__(self, index):
 
@@ -448,21 +452,24 @@ cdef class Column:
             raise IndexError()
 
         if self.data_type == DataType.DECIMAL:
-            return self._this.value[double](index)
+            return self._this.dvalue(index)
         elif self.data_type == DataType.TEXT:
-            raw = self._this.value[int](index)
-            return self._this.getLabel(raw).decode()
+            if self.measure_type == MeasureType.ID:
+                return self._this.svalue(index).decode('utf-8')
+            else:
+                raw = self._this.ivalue(index)
+                return self._this.getLabel(raw).decode()
         else:
-            return self._this.value[int](index)
+            return self._this.ivalue(index)
 
     def __iter__(self):
         return CellIterator(self)
 
     def raw(self, index):
         if self.data_type == DataType.DECIMAL:
-            return self._this.value[double](index)
+            return self._this.dvalue(index)
         else:
-            return self._this.value[int](index)
+            return self._this.ivalue(index)
 
     def change(self,
         name=None,
@@ -511,7 +518,9 @@ cdef class Column:
                         data_type = DataType.DECIMAL
             else:
                 if data_type is DataType.DECIMAL:
-                    if self.data_type is DataType.INTEGER:
+                    if self.data_type is DataType.DECIMAL and self.dps == 0:
+                        data_type = DataType.INTEGER
+                    elif self.data_type is DataType.INTEGER:
                         data_type = DataType.INTEGER
                     else:
                         data_type = DataType.TEXT
@@ -572,7 +581,7 @@ cdef class Column:
             self.measure_type = MeasureType.CONTINUOUS
 
             for i in range(len(values)):
-                self[i] = values[i]
+                self.set_value(i, values[i])
 
             self.determine_dps()
 
@@ -582,163 +591,252 @@ cdef class Column:
 
                 self.measure_type = measure_type
 
-                if new_m_type == MeasureType.CONTINUOUS:
+                if new_m_type == MeasureType.CONTINUOUS or new_m_type == MeasureType.ID:
                     self.clear_levels()
-                elif old_m_type == MeasureType.CONTINUOUS:
+                elif old_m_type == MeasureType.CONTINUOUS or old_m_type == MeasureType.ID:
                     for value in self:
                         if value == -2147483648:
                             pass
                         elif not self.has_level(value):
                             self.append_level(value, str(value), str(value))
-                else:
-                    if levels is not None:
-                        self.clear_levels()
-                        for level in levels:
-                            self.append_level(level[0], level[1], str(level[0]))
-                        self._update_level_counts()
+                    self._update_level_counts()
+                elif levels is not None:
+                    self.clear_levels()
+                    for level in levels:
+                        self.append_level(level[0], level[1], str(level[0]))
+                    self._update_level_counts()
 
             elif old_type == DataType.DECIMAL:
                 nan = float('nan')
-                values = list(self)
 
                 self._this.setDataType(DataType.INTEGER.value)
                 self.measure_type = measure_type
 
-                for i in range(len(values)):
-                    try:
-                        value = values[i]
-                        if value != nan:
-                            value = round(float(value))
-                            if not self.has_level(value):
+                for i in range(self.row_count):
+                    value = self._this.dvalue(i)
+                    if value != nan:
+                        value = int(value)
+                        if (measure_type != MeasureType.ID and
+                            measure_type != MeasureType.CONTINUOUS and
+                            not self.has_level(value)):
                                 self.insert_level(value, str(value))
-                        else:
-                            value = -2147483648
-                        self._this.setValue[int](i, value, True)
-                    except ValueError:
-                        self._this.setValue[int](i, -2147483648, True)
+                    else:
+                        value = -2147483648
+                    self._this.setIValue(i, value, True)
 
             elif old_type == DataType.TEXT:
                 nan = ''
 
-                level_ivs = { }
-                for level in self.levels:
-                    level_ivs[level[1]] = level[2]
+                if measure_type != MeasureType.ID:
 
-                values = list(self)
-                self.clear_levels()
+                    values = list(self)
+                    level_ivs = { }
 
-                self._this.setDataType(DataType.INTEGER.value)
-                self.measure_type = measure_type
+                    if old_m_type != MeasureType.ID:
+                        for level in self.levels:
+                            level_ivs[level[1]] = level[2]
+                    else:
+                        for label in sorted(set(values)):
+                            try:
+                                level_ivs[label] = int(float(label))
+                            except Exception:
+                                pass
 
-                for i in range(len(values)):
-                    try:
-                        value = values[i]
-                        if value != nan:
-                            label = value
-                            value = int(float(level_ivs[value]))
-                            if not self.has_level(value):
-                                self.insert_level(value, label, str(value))
-                        else:
+                    self.clear_levels()
+
+                    self._this.setDataType(DataType.INTEGER.value)
+                    self.measure_type = measure_type
+
+                    for i in range(len(values)):
+                        value = -2147483648
+                        try:
+                            value = values[i]
+                            if value != nan:
+                                label = value
+                                value = int(float(level_ivs[value]))
+                                if not self.has_level(value):
+                                    self.insert_level(value, label, str(value))
+                        except ValueError:
                             value = -2147483648
-                        self._this.setValue[int](i, value, True)
-                    except ValueError:
-                        self._this.setValue[int](i, -2147483648, True)
+                        self._this.setIValue(i, value, True)
+
+                else:
+                    self._this.setDataType(DataType.INTEGER.value)
+                    self.measure_type = MeasureType.ID
+
+                    for i in range(self.row_count):
+                        try:
+                            value = self._this.svalue(i)
+                            if len(value) > 0:
+                                value = int(float(value.decode('utf-8')))
+                            else:
+                                value = -2147483648
+                        except ValueError:
+                            value = -2147483648
+                        self._this.setIValue(i, value, True)
 
                 self.dps = 0
 
         elif new_type == DataType.TEXT:
             if old_type == DataType.TEXT:
 
-                self.measure_type = measure_type
+                if new_m_type == MeasureType.ID:
+                    if old_m_type != MeasureType.ID:
 
-                if levels is not None:
-                    old_levels = self.levels
+                        # change to MeasureType.ID
 
-                    recode = { }
-                    for old_level in old_levels:
-                        for new_level in levels:
-                            if old_level[2] == new_level[2]:
-                                recode[old_level[0]] = new_level[0]
-                                break
+                        values = list(self)
+                        self.clear_levels()
+                        self.measure_type = MeasureType.ID
 
-                    self.clear_levels()
-                    for level in levels:
-                        self.append_level(level[0], level[1], level[2])
+                        for row_no in range(self.row_count):
+                            value = str(values[row_no])
+                            self._this.setSValue(row_no, value.encode('utf-8'), True)
 
-                    for row_no in range(self.row_count):
-                        value = self._this.value[int](row_no)
-                        value = recode.get(value, -2147483648)
-                        self._this.setValue[int](row_no, value, True)
+                else:
+                    if old_m_type == MeasureType.ID:
+
+                        # change *from* MeasureType.ID
+
+                        values = list(self)
+                        levels = set(values)
+                        levels = sorted(levels)
+                        levels = filter(lambda x: x != '', levels)
+
+                        self.clear_levels()
+                        self.measure_type = new_m_type
+
+                        recode = { }
+                        level_i = 0
+                        for level in levels:
+                            recode[level] = level_i
+                            self.append_level(level_i, level, level)
+                            level_i += 1
+
+                        for row_no in range(self.row_count):
+                            value = values[row_no]
+                            value = recode.get(value, -2147483648)
+                            self._this.setIValue(row_no, value, True)
+
+                    elif levels is not None:
+
+                        # change to levels
+
+                        old_levels = self.levels
+                        self.measure_type = new_m_type
+
+                        recode = { }
+                        for old_level in old_levels:
+                            for new_level in levels:
+                                if old_level[2] == new_level[2]:
+                                    recode[old_level[0]] = new_level[0]
+                                    break
+
+                        self.clear_levels()
+                        for level in levels:
+                            self.append_level(level[0], level[1], level[2])
+
+                        for row_no in range(self.row_count):
+                            value = self._this.ivalue(row_no)
+                            value = recode.get(value, -2147483648)
+                            self._this.setIValue(row_no, value, True)
+                    else:
+                        self.measure_type = new_m_type
 
             elif old_type == DataType.DECIMAL:
                 nan = float('nan')
 
-                dps = self.dps
-                multip = math.pow(10, dps)
+                if measure_type != MeasureType.ID:
+                    dps = self.dps
+                    multip = math.pow(10, dps)
 
-                uniques = set()
-                for value in self:
-                    if math.isnan(value) == False:
-                        uniques.add(int(value * multip))
-                uniques = list(uniques)
-                uniques.sort()
+                    uniques = set()
+                    for value in self:
+                        if math.isnan(value) == False:
+                            uniques.add(int(value * multip))
+                    uniques = list(uniques)
+                    uniques.sort()
 
-                self._this.setDataType(DataType.TEXT.value)
-                self.measure_type = measure_type
+                    self._this.setDataType(DataType.TEXT.value)
+                    self.measure_type = measure_type
 
-                for i in range(len(uniques)):
-                    v = float(uniques[i]) / multip
-                    label = '{:.{}f}'.format(v, dps)
-                    self.append_level(i, label, label)
+                    for i in range(len(uniques)):
+                        v = float(uniques[i]) / multip
+                        label = '{:.{}f}'.format(v, dps)
+                        self.append_level(i, label, label)
 
-                v2i = { }
-                for i in range(len(uniques)):
-                    v2i[uniques[i]] = i
-                for i in range(self.row_count):
-                    value = self._this.value[double](i)
-                    if math.isnan(value):
-                        self._this.setValue[int](i, -2147483648, True)
-                    else:
-                        self._this.setValue[int](i, v2i[int(value * multip)], True)
+                    v2i = { }
+                    for i in range(len(uniques)):
+                        v2i[uniques[i]] = i
+                    for i in range(self.row_count):
+                        value = self._this.dvalue(i)
+                        if math.isnan(value):
+                            self._this.setIValue(i, -2147483648, True)
+                        else:
+                            self._this.setIValue(i, v2i[int(value * multip)], True)
+                else:
+
+                    dps = self.dps
+                    self._this.setDataType(DataType.TEXT.value)
+                    self.measure_type = measure_type
+
+                    for i in range(self.row_count):
+                        value = self._this.dvalue(i)
+                        if dps == 0:
+                            value = int(value)
+                        self._this.setSValue(i, str(value).encode('utf-8'), True)
 
             elif old_type == DataType.INTEGER:
                 nan = -2147483648
 
-                level_labels = { }
+                if measure_type is MeasureType.ID:
 
-                uniques = set()
-                for value in self:
-                    if value != -2147483648:
-                        uniques.add(value)
-                uniques = list(uniques)
-                uniques.sort()
+                    values = list(map(lambda x: '' if x == nan else str(x), self))
+                    self.clear_levels()
+                    self._this.setDataType(DataType.TEXT.value)
+                    self.measure_type = MeasureType.ID
+                    row_no = 0
+                    for value in values:
+                        self.set_value(row_no, value)
+                        row_no += 1
 
-                if self.has_levels:
-                    for level in self.levels:
-                        value = level[0]
-                        label = level[1]
-                        level_labels[value] = label
                 else:
-                    for value in uniques:
-                        label = str(value)
-                        level_labels[value] = label
 
-                self.clear_levels()
-                self._this.setDataType(DataType.TEXT.value)
-                self.measure_type = measure_type
+                    level_labels = { }
 
-                for i in range(len(uniques)):
-                    value = uniques[i]
-                    label = level_labels[value]
-                    self.append_level(i, label, str(value))
+                    uniques = set()
+                    for value in self:
+                        if value != nan:
+                            uniques.add(value)
+                    uniques = list(uniques)
+                    uniques.sort()
 
-                v2i = { }
-                for i in range(len(uniques)):
-                    v2i[uniques[i]] = i
-                for i in range(self.row_count):
-                    value = self._this.value[int](i)
-                    if value != nan:
-                        self._this.setValue[int](i, v2i[value], True)
+                    if self.has_levels:
+                        for level in self.levels:
+                            value = level[0]
+                            label = level[1]
+                            level_labels[value] = label
+                    else:
+                        for value in uniques:
+                            label = str(value)
+                            level_labels[value] = label
+
+                    self.clear_levels()
+                    self._this.setDataType(DataType.TEXT.value)
+                    self.measure_type = measure_type
+
+                    for i in range(len(uniques)):
+                        value = uniques[i]
+                        label = level_labels[value]
+                        self.append_level(i, label, str(value))
+
+                    v2i = { }
+                    for i in range(len(uniques)):
+                        v2i[uniques[i]] = i
+                    for i in range(self.row_count):
+                        value = self._this.ivalue(i)
+                        if value != nan:
+                            self._this.setIValue(i, v2i[value], True)
 
 cdef extern from "dirs.h":
     cdef cppclass CDirs "Dirs":

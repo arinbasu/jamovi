@@ -57,6 +57,86 @@ void ColumnW::setMeasureType(MeasureType::Type measureType)
     ColumnStruct *s = struc();
     s->measureType = (char)measureType;
     s->changes++;
+
+    if (measureType == MeasureType::ID)
+        setRowCount<char*>(rowCount());
+}
+
+void ColumnW::setSValue(int rowIndex, char *value, bool initing)
+{
+    assert(measureType() == MeasureType::ID);
+
+    size_t len = strlen(value);
+    if (len > 0)
+    {
+        char *chars = _mm->allocate<char>(len + 1);
+        memcpy(chars, value, len + 1);
+
+        cellAt<char*>(rowIndex) = _mm->base(chars);
+    }
+    else
+    {
+        cellAt<char*>(rowIndex) = NULL;
+    }
+}
+
+void ColumnW::setDValue(int rowIndex, double value, bool initing)
+{
+    assert(dataType() == DataType::DECIMAL);
+
+    cellAt<double>(rowIndex) = value;
+}
+
+void ColumnW::setIValue(int rowIndex, int value, bool initing)
+{
+    assert(dataType() != DataType::DECIMAL);
+
+    if (measureType() == MeasureType::CONTINUOUS)
+    {
+        cellAt<int>(rowIndex) = value;
+        return;
+    }
+
+    int newValue = (int)value;
+
+    if (initing == false)
+    {
+        int oldValue = this->ivalue(rowIndex);
+        if (oldValue == newValue)
+            return;
+
+        if (oldValue != INT_MIN)
+        {
+            Level *level = rawLevel(oldValue);
+            assert(level != NULL);
+            level->count--;
+
+            if (level->count == 0 && trimLevels())
+                removeLevel(oldValue);
+            else if ( ! this->_parent->isRowFiltered(rowIndex))
+                level->countExFiltered--;
+        }
+    }
+
+    if (newValue != INT_MIN)
+    {
+        Level *level = rawLevel(newValue);
+        if (level == NULL)
+        {
+            std::ostringstream ss;
+            ss << newValue;
+            std::string str = ss.str();
+            const char *c_str = str.c_str();
+            insertLevel(newValue, c_str, c_str);
+            level = rawLevel(newValue);
+        }
+        assert(level != NULL);
+        level->count++;
+        if ( ! this->_parent->isRowFiltered(rowIndex))
+            level->countExFiltered++;
+    }
+
+    cellAt<int>(rowIndex) = value;
 }
 
 void ColumnW::setAutoMeasure(bool yes)
@@ -237,7 +317,8 @@ void ColumnW::appendLevel(int value, const char *label, const char *importValue)
 
 void ColumnW::updateLevelCounts() {
 
-    if (measureType() != MeasureType::CONTINUOUS)
+    if (measureType() != MeasureType::CONTINUOUS &&
+        measureType() != MeasureType::ID)
     {
         ColumnStruct *s = struc();
         Level *levels = _mm->resolve(s->levels);

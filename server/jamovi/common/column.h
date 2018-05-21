@@ -151,10 +151,9 @@ public:
     bool trimLevels() const;
     bool hasUnusedLevels() const;
 
-    template<typename T> T value(int rowIndex)
-    {
-        return cellAt<T>(rowIndex);
-    }
+    int ivalue(int index);
+    double dvalue(int index);
+    const char *svalue(int index);
 
 protected:
 
